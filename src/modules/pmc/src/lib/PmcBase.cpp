@@ -30,8 +30,6 @@ constexpr const char* g_commandCheckToolPresence = "command -v $value";
 constexpr const char* g_commandAptUpdate = "apt-get update";
 constexpr const char* g_commandExecuteUpdate = "apt-get install $value -y --allow-downgrades --auto-remove";
 constexpr const char* g_commandGetInstalledPackageVersion = "apt-cache policy $value | grep Installed";
-constexpr const char* g_commandGetInstalledPackagesHash = "dpkg-query --showformat='${Package} (=${Version})\n' --show | sha256sum | head -c 64";
-constexpr const char* g_commandGetSourcesFingerprint = "find $value -type f -name '*.list' -exec cat {} \\; | sha256sum | head -c 64";
 constexpr const char* g_regexPackages = "(?:[a-zA-Z\\d\\-]+(?:=[a-zA-Z\\d\\.\\+\\-\\~\\:]+|\\-| )*)+";
 constexpr const char* g_sourcesFolderPath = "/etc/apt/sources.list.d/";
 constexpr const char* g_listExtension = ".list";
@@ -168,14 +166,14 @@ int PmcBase::Set(const char* componentName, const char* objectName, const MMI_JS
                     if (0 == DeserializeDesiredState(document, desiredState))
                     {
                         status = ValidateAndGetPackagesNames(desiredState.packages);
-                        if (status != MMI_OK)
+                        if (status != 0)
                         {
                             return status;
                         }
 
                         status = PmcBase::ConfigureSources(desiredState.sources);
 
-                        if (status == MMI_OK)
+                        if (status == 0)
                         {
                             status = PmcBase::ExecuteUpdates(desiredState.packages);
                         }
@@ -242,7 +240,7 @@ int PmcBase::Get(const char* componentName, const char* objectName, MMI_JSON_STR
             {
                 State reportedState;
                 reportedState.executionState = m_executionState;
-                reportedState.packagesFingerprint = GetFingerprint();
+                reportedState.packagesFingerprint = GetPackagesFingerprint();
                 reportedState.packages = GetReportedPackages(m_desiredPackages);
                 reportedState.sourcesFingerprint = GetSourcesFingerprint(m_sourcesConfigurationDirectory);
                 reportedState.sourcesFilenames = ListFiles(m_sourcesConfigurationDirectory, g_listExtension);
@@ -274,7 +272,7 @@ bool PmcBase::CanRunOnThisPlatform()
     for (auto& tool : g_requiredTools)
     {
         std::string command = std::regex_replace(g_commandCheckToolPresence, std::regex("\\$value"), tool);
-        if (RunCommand(command.c_str(), nullptr) != MMI_OK)
+        if (RunCommand(command.c_str(), nullptr) != 0)
         {
             if (IsFullLoggingEnabled())
             {
@@ -407,7 +405,7 @@ int PmcBase::ExecuteUpdate(const std::string &value)
     std::string command = std::regex_replace(g_commandExecuteUpdate, std::regex("\\$value"), value);
 
     int status = RunCommand(command.c_str(), nullptr, true);
-    if (status != MMI_OK && IsFullLoggingEnabled())
+    if (status != 0 && IsFullLoggingEnabled())
     {
         OsConfigLogError(PmcLog::Get(), "ExecuteUpdate failed with status %d and arguments '%s'", status, value.c_str());
     }
@@ -416,17 +414,17 @@ int PmcBase::ExecuteUpdate(const std::string &value)
 
 int PmcBase::ExecuteUpdates(const std::vector<std::string> packages)
 {
-    int status = MMI_OK;
+    int status = 0;
 
     for (std::string package : packages)
     {
         m_executionState.SetExecutionState(ExecutionState::StateComponent::running, ExecutionState::SubStateComponent::installingPackages, package);
         status = ExecuteUpdate(package);
-        if (status != MMI_OK)
+        if (status != 0)
         {
             OsConfigLogError(PmcLog::Get(), "Failed to update package(s): %s", package.c_str());
             status == ETIME ? m_executionState.SetExecutionState(ExecutionState::StateComponent::timedOut, ExecutionState::SubStateComponent::installingPackages, package)
-                            : m_executionState.SetExecutionState(ExecutionState::StateComponent::failed, ExecutionState::SubStateComponent::installingPackages, package);
+                : m_executionState.SetExecutionState(ExecutionState::StateComponent::failed, ExecutionState::SubStateComponent::installingPackages, package);
             return status;
         }
     }
@@ -496,13 +494,6 @@ int PmcBase::SerializeState(State reportedState, MMI_JSON_STRING* payload, int* 
     return status;
 }
 
-std::string PmcBase::GetFingerprint()
-{
-    std::string hashString = "";
-    RunCommand(g_commandGetInstalledPackagesHash, &hashString);
-    return hashString;
-}
-
 int PmcBase::ValidateAndGetPackagesNames(std::vector<std::string> packagesLines)
 {
     // Clear previous packages names
@@ -530,7 +521,7 @@ int PmcBase::ValidateAndGetPackagesNames(std::vector<std::string> packagesLines)
             }
     }
 
-    return MMI_OK;
+    return 0;
 }
 
 std::vector<std::string> PmcBase::GetReportedPackages(std::vector<std::string> packages)
@@ -547,7 +538,7 @@ std::vector<std::string> PmcBase::GetReportedPackages(std::vector<std::string> p
 
             std::string rawVersion = "";
             status = RunCommand(command.c_str(), &rawVersion);
-            if (status != MMI_OK && IsFullLoggingEnabled())
+            if (status != 0 && IsFullLoggingEnabled())
             {
                 OsConfigLogError(PmcLog::Get(), "Get the installed version of package %s failed with status %d", packageName.c_str(), status);
             }
@@ -609,28 +600,14 @@ std::string PmcBase::Trim(const std::string& str, const std::string& trim)
     return TrimStart(TrimEnd(str, trim), trim);
 }
 
-std::string PmcBase::GetSourcesFingerprint(const char* sourcesDirectory)
-{
-    std::string hashString = "";
-    std::string command = std::regex_replace(g_commandGetSourcesFingerprint, std::regex("\\$value"), sourcesDirectory);
-    int status = RunCommand(command.c_str(), &hashString);
-
-    if (status != MMI_OK && IsFullLoggingEnabled())
-    {
-        OsConfigLogError(PmcLog::Get(), "Get the fingerprint of source files in directory %s failed with status %d", sourcesDirectory, status);
-    }
-
-    return !hashString.empty() ? hashString : "(failed)";
-}
-
 std::vector<std::string> PmcBase::ListFiles(const char* directory, const char* fileNameExtension)
 {
     struct dirent* entry = nullptr;
     DIR* directoryStream = nullptr;
-    int extensionLength = nullptr != fileNameExtension ? strlen(fileNameExtension) : 0;
-    char* fileName;
-    int fileNameLength;
-    char* lastCharacters;
+    int extensionLength = (nullptr != fileNameExtension) ? strlen(fileNameExtension) : 0;
+    char* fileName = nullptr;
+    int fileNameLength = 0;
+    char* lastCharacters = nullptr;
     std::vector<std::string> result;
 
     directoryStream = opendir(directory);
@@ -639,7 +616,7 @@ std::vector<std::string> PmcBase::ListFiles(const char* directory, const char* f
         while ((entry = readdir(directoryStream)))
         {
             fileName = entry->d_name;
-            if ((0 == strcmp(fileName, ".")) || (0 == strcmp(fileName, "..")))
+            if ((nullptr == fileName) || (0 == strcmp(fileName, ".")) || (0 == strcmp(fileName, "..")))
             {
                 continue;
             }
@@ -673,7 +650,7 @@ std::vector<std::string> PmcBase::ListFiles(const char* directory, const char* f
 
 int PmcBase::ConfigureSources(const std::map<std::string, std::string> sources)
 {
-    int status = MMI_OK;
+    int status = 0;
 
     for (auto& source : sources)
     {
@@ -693,7 +670,7 @@ int PmcBase::ConfigureSources(const std::map<std::string, std::string> sources)
                 OsConfigLogInfo(PmcLog::Get(), "Nothing to delete. Source(s) file: %s does not exist", sourcesFilePath.c_str());
             }
 
-            if (status != MMI_OK)
+            if (status != 0)
             {
                 OsConfigLogError(PmcLog::Get(), "Failed to delete source(s) file %s with status %d. Stopping configuration for further sources", sourcesFilePath.c_str(), status);
                 m_executionState.SetExecutionState(ExecutionState::StateComponent::failed, ExecutionState::SubStateComponent::modifyingSources, source.first);
@@ -720,11 +697,11 @@ int PmcBase::ConfigureSources(const std::map<std::string, std::string> sources)
     m_executionState.SetExecutionState(ExecutionState::StateComponent::running, ExecutionState::SubStateComponent::updatingPackagesLists);
     status = RunCommand(g_commandAptUpdate, nullptr);
 
-    if (status != MMI_OK)
+    if (status != 0)
     {
         OsConfigLogError(PmcLog::Get(), "Refresh package lists failed with status %d", status);
         status == ETIME ? m_executionState.SetExecutionState(ExecutionState::StateComponent::timedOut, ExecutionState::SubStateComponent::updatingPackagesLists)
-                        : m_executionState.SetExecutionState(ExecutionState::StateComponent::failed, ExecutionState::SubStateComponent::updatingPackagesLists);
+            : m_executionState.SetExecutionState(ExecutionState::StateComponent::failed, ExecutionState::SubStateComponent::updatingPackagesLists);
     }
     else
     {

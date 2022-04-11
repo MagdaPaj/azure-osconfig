@@ -18,6 +18,7 @@ project(osconfig)
 
 set(osconfig_files
     ./AisUtils.c
+    ./ConfigUtils.c
     ./MpiProxy.c
     ./PnpAgent.c
     ./PnpUtils.c)
@@ -109,5 +110,6 @@ install(TARGETS ${target_name} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES daemon/${target_name}.conn DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/osconfig)
 install(FILES daemon/${target_name}.json DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/osconfig)
 install(FILES daemon/${target_name}.service DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/systemd/system)
-install(FILES daemon/${target_name}.toml DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/aziot/identityd/config.d)
+# install osconfig.toml breaks a current install only binplace to final destination (${CMAKE_INSTALL_SYSCONFDIR}/aziot/identityd/config.d) if non-existent
+install(FILES daemon/${target_name}.toml DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/osconfig)
 install(FILES telemetryevents/OsConfigAgentTelemetry.conf DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/azure-device-telemetryd)
